@@ -242,7 +242,15 @@
         connected-uids_ (atom {:ws #{} :ajax #{} :any #{}})
         send-buffers_   (atom {:ws  {} :ajax  {}}) ; {<uid> [<buffered-evs> <#{ev-uuids}>]}
 
-        upd-connected-uids!
+        connect-uid!
+        (fn [type uid]
+          (swap! connected-uids_
+            (fn [{:keys [ws ajax any]}]
+              (case type
+                :ws   {:ws (conj ws uid) :ajax ajax            :any (conj any uid)}
+                :ajax {:ws ws            :ajax (conj ajax uid) :any (conj any uid)}))))
+
+        upd-connected-uid! ; Useful for disconnects
         (fn [uid]
           (reset! connected-uids_
             (let [{:keys [ws ajax any]} @conns_ ; Atomic reset
@@ -367,9 +375,7 @@
                  (or uid "(no uid)") (str hk-ch)) ; _Must_ call `str` on ch
                (when uid
                  (encore/swap-in! conns_ [:ws uid] (fn [s] (conj (or s #{}) hk-ch)))
-                 (swap! connected-uids_
-                   (fn [{:keys [ws ajax any]}]
-                     {:ws (conj ws uid) :ajax ajax :any (conj any uid)})))
+                 (connect-uid! :ws uid))
 
                (http-kit/on-receive hk-ch
                  (fn [req-edn]
@@ -393,15 +399,13 @@
                            (if (empty? new)
                              (dissoc m uid) ; gc
                              (assoc  m uid new)))))
-                     (upd-connected-uids! uid))))
+                     (upd-connected-uid! uid))))
                (http-kit/send! hk-ch (pr-str [:chsk/handshake :ws])))
 
              (when uid ; Server shouldn't attempt a non-uid long-pollling GET anyway
                (encore/swap-in! conns_ [:ajax uid client-uuid]
                  (fn [m] [hk-ch (encore/now-udt)]))
-               (swap! connected-uids_
-                 (fn [{:keys [ws ajax any]}]
-                   {:ws ws :ajax (conj ajax uid) :any (conj any uid)}))
+               (connect-uid! :ajax uid)
 
                ;; We rely on `on-close` to trigger for _every_ conn:
                (http-kit/on-close hk-ch
@@ -431,7 +435,7 @@
                                          (assoc  m uid new))
                                        true))))))]
                         (when disconnected?
-                          (upd-connected-uids! uid))))))))))))}))
+                          (upd-connected-uid! uid))))))))))))}))
 
 ;;;; Client
 
